@@ -1,0 +1,86 @@
+# Local development stack: Ollama, API, and Streamlit.
+#
+#   docker compose up -d ollama
+#   docker compose exec ollama ollama pull qwen2.5-coder:7b
+#   REPO_PATH=/home/me/code/myproject docker compose up -d
+#   open http://localhost:8501
+#
+# The default bridge can reach the internet so Ollama can download a model. For
+# an isolated deployment, preload the model first, then uncomment `internal:
+# true` below and recreate the stack. The API and UI ports bind to loopback.
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: vibekill-ollama
+    volumes:
+      - ollama-models:/root/.ollama
+    networks:
+      - vibekill-net
+    # Uncomment for GPU inference.
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+    restart: unless-stopped
+
+  api:
+    build: .
+    container_name: vibekill-api
+    entrypoint: ["uvicorn"]
+    command: ["vibekill.api:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      # The model lives on another container, so it must be allowlisted by name
+      # or the guard will refuse the connection.
+      VIBEKILL_LLM__BASE_URL: http://ollama:11434
+      VIBEKILL_LLM__MODEL: qwen2.5-coder:7b
+      VIBEKILL_LLM__PROVIDER: ollama
+      VIBEKILL_ALLOW_HOSTS: '["127.0.0.1","localhost","::1","ollama"]'
+    volumes:
+      - ${REPO_PATH:-.}:/repo:ro
+    ports:
+      # Loopback only. The API is unauthenticated; do not publish it broadly.
+      - "127.0.0.1:8000:8000"
+    networks:
+      - vibekill-net
+    depends_on:
+      - ollama
+    restart: unless-stopped
+
+  ui:
+    build: .
+    container_name: vibekill-ui
+    entrypoint: ["streamlit"]
+    command:
+      - "run"
+      - "/opt/venv/lib/python3.12/site-packages/vibekill/ui.py"
+      - "--server.port=8501"
+      - "--server.address=0.0.0.0"
+      - "--server.headless=true"
+      - "--browser.gatherUsageStats=false"
+    environment:
+      VIBEKILL_LLM__BASE_URL: http://ollama:11434
+      VIBEKILL_LLM__MODEL: qwen2.5-coder:7b
+      VIBEKILL_LLM__PROVIDER: ollama
+      VIBEKILL_ALLOW_HOSTS: '["127.0.0.1","localhost","::1","ollama"]'
+    volumes:
+      - ${REPO_PATH:-.}:/repo:ro
+    ports:
+      - "127.0.0.1:8501:8501"
+    networks:
+      - vibekill-net
+    depends_on:
+      - ollama
+    restart: unless-stopped
+
+networks:
+  vibekill-net:
+    driver: bridge
+    # After the model is downloaded, uncomment for network-level isolation.
+    # internal: true
+
+volumes:
+  ollama-models:

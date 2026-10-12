@@ -1,0 +1,217 @@
+name: Release
+
+# Publishes to PyPI on a version tag, and attaches the offline install bundles to
+# the GitHub release for air-gapped users who cannot reach PyPI at all.
+#
+#   git tag v0.1.0 && git push origin v0.1.0
+#
+# Authentication is PyPI Trusted Publishing (OIDC): no API token is stored in
+# this repository. Configure it once at
+# https://pypi.org/manage/project/vibekill/settings/publishing/
+# with owner/repo, workflow name "release.yml" and environment "pypi".
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish to PyPI (otherwise build and attach artifacts only)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install build tooling
+        run: pip install build twine
+
+      - name: Read the version
+        id: version
+        run: |
+          v=$(python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "version is $v"
+
+      # A tag of v0.2.0 against pyproject 0.1.0 would publish the wrong number,
+      # and a PyPI release can never be replaced, only yanked.
+      - name: Refuse a tag that disagrees with pyproject
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag="${GITHUB_REF#refs/tags/v}"
+          got="${{ steps.version.outputs.version }}"
+          if [ "$tag" != "$got" ]; then
+            echo "::error::tag v$tag does not match pyproject version $got"
+            exit 1
+          fi
+          echo "tag and pyproject agree on $got"
+
+      - name: Test before publishing
+        run: |
+          pip install -e ".[ui,dev]"
+          ruff check src/ tests/
+          pytest tests/ -q
+
+      - name: Build
+        run: |
+          rm -rf dist
+          python -m build
+          twine check dist/*
+
+      - name: Verify the wheel installs and runs
+        run: |
+          python - <<'PY'
+          import glob, sys, zipfile
+          names = zipfile.ZipFile(glob.glob("dist/*.whl")[0]).namelist()
+          if "vibekill/report/template.html" not in names:
+              sys.exit("HTML template missing from the wheel")
+          PY
+          python -m venv /tmp/rel
+          /tmp/rel/bin/pip install --quiet dist/*.whl
+          test "$(/tmp/rel/bin/vibekill version)" = "${{ steps.version.outputs.version }}"
+          echo "wheel reports the expected version"
+
+      - name: Build the offline install bundles
+        # A bare wheel is not installable without network, because pip still
+        # resolves dependencies. These archives carry every transitive wheel.
+        run: |
+          V="${{ steps.version.outputs.version }}"
+
+          build_bundle() {
+            name="$1"; shift
+            rm -rf wheelhouse && mkdir -p wheelhouse
+            pip download -q -d wheelhouse "$@"
+            cp dist/vibekill-$V-py3-none-any.whl wheelhouse/
+            sed \
+              -e "s/__VERSION__/$V/g" \
+              -e "s/__PYTHON__/python3.12/g" \
+              -e "s/__PYTHON_VERSION__/3.12/g" \
+              -e "s/__PYTHON_TUPLE__/(3, 12)/g" \
+              -e "s/__BUNDLE_TAG__/py312-linux-x86_64/g" \
+              packaging/install.sh > wheelhouse/install.sh
+            chmod +x wheelhouse/install.sh
+            sed \
+              -e "s/__VERSION__/$V/g" \
+              -e "s/__PYTHON_VERSION__/3.12/g" \
+              -e "s/__BUNDLE_TAG__/py312-linux-x86_64/g" \
+              packaging/BUNDLE_README.txt > wheelhouse/README.txt
+            tar -czf "dist/vibekill-$V-$name-py312-linux-x86_64.tar.gz" -C wheelhouse .
+            echo "$name: $(ls -1 wheelhouse/*.whl | wc -l) wheels"
+          }
+
+          build_bundle offline      "dist/vibekill-$V-py3-none-any.whl"
+          build_bundle offline-full "dist/vibekill-$V-py3-none-any.whl[ui]"
+
+          # Prove the small archive installs without an index before publishing.
+          mkdir /tmp/offline && tar -xzf "dist/vibekill-$V-offline-py312-linux-x86_64.tar.gz" -C /tmp/offline
+          sh /tmp/offline/install.sh /tmp/offline/venv
+          /tmp/offline/venv/bin/vibekill version
+
+          ls -lh dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 14
+
+  publish-pypi:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.publish
+    environment:
+      name: pypi
+      url: https://pypi.org/p/vibekill
+    permissions:
+      # Required for Trusted Publishing. This is what replaces an API token.
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Keep only the wheel and sdist
+        # The offline bundles belong on the GitHub release, not on PyPI, which
+        # rejects anything that is not a distribution file.
+        run: |
+          mkdir -p upload
+          cp dist/*.whl dist/*.tar.gz upload/ 2>/dev/null || true
+          rm -f upload/*-offline-*.tar.gz upload/*-offline-full-*.tar.gz
+          ls -l upload/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: upload/
+          print-hash: true
+
+  github-release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          V: ${{ needs.build.outputs.version }}
+        run: |
+          notes=$(mktemp)
+          cat > "$notes" <<EOF
+          ## Install
+
+          \`\`\`bash
+          pipx install vibekill==$V     # recommended for a CLI
+          pip install vibekill==$V
+          \`\`\`
+
+          ## Air-gapped install
+
+          No network needed on the target machine. Pick the bundle you want,
+          copy it across, and run the installer:
+
+          \`\`\`bash
+          mkdir vibekill-install
+          tar -xzf vibekill-$V-offline-py312-linux-x86_64.tar.gz -C vibekill-install
+          sh vibekill-install/install.sh ~/.local/vibekill
+          export PATH="\$HOME/.local/vibekill/bin:\$PATH"
+          vibekill doctor      # confirms egress is blocked
+          \`\`\`
+
+          | Bundle | Contents |
+          |---|---|
+          | \`vibekill-$V-offline-py312-linux-x86_64.tar.gz\` | CLI and API. Python 3.12, Linux x86_64. |
+          | \`vibekill-$V-offline-full-py312-linux-x86_64.tar.gz\` | Adds the Streamlit UI. Python 3.12, Linux x86_64. |
+
+          Compiled dependency wheels are Python-ABI and platform-specific. Build
+          with \`make bundle\` on a matching machine for any other target.
+          EOF
+
+          gh release create "v$V" \
+            --title "vibekill $V" \
+            --notes-file "$notes" \
+            dist/vibekill-$V-py3-none-any.whl \
+            dist/vibekill-$V.tar.gz \
+            dist/vibekill-$V-offline-py312-linux-x86_64.tar.gz \
+            dist/vibekill-$V-offline-full-py312-linux-x86_64.tar.gz

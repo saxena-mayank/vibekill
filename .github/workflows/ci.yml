@@ -1,0 +1,124 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Oldest and newest supported. The middle version rarely breaks alone,
+        # and keeping the matrix small keeps PR feedback fast.
+        python: ["3.11", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The local git source resolves merge-base, so tests that build
+          # repositories need real git history available.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      - name: Install
+        run: pip install -e ".[ui,dev]"
+
+      - name: Lint
+        run: ruff check src/ tests/
+
+      - name: Test
+        run: pytest tests/ -q
+
+      - name: Smoke test Streamlit
+        run: |
+          streamlit run src/vibekill/ui.py \
+            --server.headless=true \
+            --server.address=127.0.0.1 \
+            --server.port=8766 \
+            --browser.gatherUsageStats=false > /tmp/streamlit.log 2>&1 &
+          pid=$!
+          trap 'kill $pid 2>/dev/null || true' EXIT
+          for attempt in {1..20}; do
+            curl -fsS http://127.0.0.1:8766/_stcore/health && break
+            sleep 0.5
+          done
+          curl -fsS http://127.0.0.1:8766/_stcore/health | grep -q ok
+
+      - name: Build and verify the wheel
+        # Catches packaging faults the source-tree tests cannot see, such as the
+        # HTML template being left out of the wheel.
+        run: |
+          pip install build
+          python -m build
+          python - <<'PY'
+          import glob, sys, zipfile
+          wheel = glob.glob("dist/*.whl")[0]
+          names = zipfile.ZipFile(wheel).namelist()
+          required = "vibekill/report/template.html"
+          print(f"{wheel}: {len(names)} entries")
+          if required not in names:
+              sys.exit(f"missing from wheel: {required}")
+          print(f"OK  {required}")
+          PY
+
+      - name: Smoke test the installed wheel
+        run: |
+          python -m venv /tmp/smoke
+          /tmp/smoke/bin/pip install --quiet dist/*.whl
+          /tmp/smoke/bin/vibekill version
+          /tmp/smoke/bin/vk version
+          /tmp/smoke/bin/vibekill doctor || true
+
+  dogfood:
+    # vibekill reviews its own pull requests. If the tool cannot survive its own
+    # output, that is worth knowing before anyone else runs it.
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -e ".[dev,analysers]"
+
+      - name: Review this PR
+        # Advisory: never fails the build on findings. Raise fail_on once the
+        # signal has been trusted for a while.
+        run: |
+          vibekill review \
+            --base origin/${{ github.base_ref }} \
+            --head HEAD \
+            --provider none \
+            --format markdown,sarif \
+            --fail-on blocker || true
+
+      - name: Publish to the job summary
+        if: always()
+        run: cat .vibekill/review.md >> "$GITHUB_STEP_SUMMARY" || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vibekill-review
+          path: .vibekill/
+          if-no-files-found: ignore

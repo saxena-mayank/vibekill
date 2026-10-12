@@ -1,0 +1,93 @@
+[build-system]
+# setuptools>=77 is required for the SPDX `license` string and `license-files`.
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vibekill"
+version = "0.1.0"
+description = "Kills the vibe before your diff kills production. Offline agentic code review for AI-generated PRs."
+readme = "README.md"
+requires-python = ">=3.11"
+# SPDX expression, not the deprecated TOML table form. The matching
+# "License :: OSI Approved" classifier is deliberately absent: PyPI derives the
+# licence from this field now and the classifier form is on its way out.
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "vibekill contributors" }]
+keywords = [
+    "code-review",
+    "ai-code-review",
+    "vibe-coding",
+    "static-analysis",
+    "llm",
+    "airgapped",
+    "langgraph",
+    "technical-debt",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Security",
+]
+
+dependencies = [
+    "langgraph>=1.0,<2.0",      # agent orchestration and parallel fan-out
+    "pydantic>=2.7,<3.0",       # domain + API schemas
+    "pydantic-settings>=2.3,<3.0",
+    "httpx>=0.27,<0.29",        # local model HTTP, GitHub API
+    "fastapi>=0.115,<1.0",
+    "uvicorn[standard]>=0.30,<1.0",
+    "jinja2>=3.1,<4.0",         # HTML report template
+    "typer>=0.12,<1.0",         # CLI
+]
+
+[project.optional-dependencies]
+# Deterministic analysers. Optional on purpose: vibekill degrades gracefully when
+# they are absent, which is the normal case in a locked-down environment.
+analysers = [
+    "ruff>=0.6",
+    "bandit>=1.7",
+    "semgrep>=1.80",
+]
+ui = ["streamlit>=1.36,<2.0"]
+dev = [
+    "pytest>=8",
+    "ruff>=0.6",
+]
+
+[project.scripts]
+vibekill = "vibekill.cli:app"
+vk = "vibekill.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+# The HTML report template is loaded from disk at render time, so it must ship
+# inside the wheel. Without this the report crashes on a pip-installed copy while
+# working fine from a source checkout.
+vibekill = ["report/*.html"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "C4"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# `typer.Option(...)` in a default is how Typer declares CLI options. B008 is
+# about mutable defaults and does not apply.
+"src/vibekill/cli.py" = ["B008"]
+# Tests import fixtures from conftest by name, which looks like a shadowed import.
+"tests/*" = ["E402"]

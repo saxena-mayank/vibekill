@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vibekill review: {{ title }}</title>
+<style>
+:root {
+  color-scheme: light dark;
+  --bg:#fff; --fg:#18202a; --muted:#657180; --line:#dfe5eb; --card:#f7f9fb;
+  --blocker:#c52836; --major:#c66a13; --minor:#2766cc; --info:#6b7580; --ok:#238247;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg:#14181d; --fg:#e7ebef; --muted:#9aa4af; --line:#303741; --card:#1d232a;
+    --blocker:#f06c77; --major:#eba75e; --minor:#7eabea; --info:#a4adb7; --ok:#67cc8b; }
+}
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif; }
+.wrap { max-width:1040px; margin:auto; padding:36px 22px 80px; }
+h1 { margin:0 0 5px; font-size:26px; letter-spacing:-.02em; }
+h2 { margin:38px 0 14px; padding-bottom:8px; border-bottom:1px solid var(--line); font-size:18px; }
+h3 { font-size:14px; margin:0 0 10px; }
+code,pre { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:13px; }
+.sub { margin:0 0 22px; color:var(--muted); font-size:13px; }
+.sub code { padding:1px 5px; border-radius:3px; background:var(--card); }
+.verdict { display:inline-block; margin:0 0 18px; padding:8px 14px; border:1px solid; border-radius:6px; font-size:14px; }
+.verdict.request_changes { color:var(--blocker); }
+.verdict.comment { color:var(--major); }
+.verdict.approve { color:var(--ok); }
+.stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(115px,1fr)); gap:9px; }
+.stat,.panel { padding:13px 15px; border:1px solid var(--line); border-radius:7px; background:var(--card); }
+.stat .number { display:block; font-size:22px; font-weight:700; line-height:1.2; }
+.stat .label { color:var(--muted); font-size:11px; letter-spacing:.05em; text-transform:uppercase; }
+.stat.blocker .number { color:var(--blocker); } .stat.major .number { color:var(--major); }
+.stat.minor .number { color:var(--minor); } .stat.info .number { color:var(--info); }
+.charts { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+.chart-row { display:grid; grid-template-columns:minmax(90px,1fr) 3fr 30px; align-items:center; gap:8px; margin:8px 0; }
+.chart-label { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted); font-size:12px; }
+.track { height:11px; overflow:hidden; border-radius:4px; background:color-mix(in srgb,var(--line) 65%,transparent); }
+.bar { height:100%; min-width:2px; border-radius:4px; background:var(--minor); }
+.panel:first-child .bar { background:var(--major); }
+.chart-count { font-weight:650; font-size:12px; text-align:right; }
+.note { margin:10px 0; padding:11px 13px; border:1px solid var(--line); border-left:3px solid var(--major); border-radius:6px; background:var(--card); }
+.file-group { margin:0 0 24px; }
+.file-name { margin:0 0 8px; font:600 13px ui-monospace,monospace; word-break:break-all; }
+.finding { margin:0 0 10px; border:1px solid var(--line); border-left:3px solid var(--info); border-radius:6px; background:var(--card); }
+.finding.blocker { border-left-color:var(--blocker); } .finding.major { border-left-color:var(--major); }
+.finding.minor { border-left-color:var(--minor); }
+.finding summary { display:flex; align-items:baseline; gap:9px; padding:12px 14px; cursor:pointer; }
+.finding summary:focus-visible { outline:3px solid var(--minor); outline-offset:2px; }
+.finding summary::after { content:"▸"; margin-left:auto; color:var(--muted); }
+.finding[open] summary::after { content:"▾"; }
+.title { flex:1; font-weight:650; }
+.badge { padding:2px 6px; border:1px solid; border-radius:4px; font-size:10px; font-weight:750; letter-spacing:.05em; text-transform:uppercase; }
+.badge.blocker { color:var(--blocker); } .badge.major { color:var(--major); }
+.badge.minor { color:var(--minor); } .badge.info { color:var(--info); }
+.location { color:var(--muted); font:12px ui-monospace,monospace; }
+.body { padding:0 14px 14px; }
+.body p { margin:0 0 10px; }
+.evidence { margin:0 0 10px; padding:9px 11px; overflow:auto; border:1px solid var(--line); border-radius:4px; background:var(--bg); }
+.fix { margin:0 0 10px; padding-left:10px; border-left:2px solid var(--ok); }
+.fix strong { color:var(--ok); }
+.meta { display:flex; flex-wrap:wrap; gap:8px 14px; color:var(--muted); font-size:12px; }
+.clean { padding:38px; text-align:center; color:var(--muted); }
+.clean strong { display:block; color:var(--ok); font-size:17px; }
+table { width:100%; border-collapse:collapse; font-size:13px; }
+caption { padding:0 0 8px; text-align:left; color:var(--muted); }
+th,td { padding:8px 10px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; }
+th { color:var(--muted); font-size:11px; letter-spacing:.04em; text-transform:uppercase; }
+.ok { color:var(--ok); } .bad { color:var(--blocker); } .skip { color:var(--muted); }
+footer { margin-top:46px; padding-top:15px; border-top:1px solid var(--line); color:var(--muted); font-size:12px; }
+@media (max-width:720px) { .charts { grid-template-columns:1fr; } .wrap { padding:24px 14px 60px; } }
+@media print {
+  :root { --bg:#fff; --fg:#000; --card:#fff; --line:#bbb; }
+  .wrap { max-width:none; padding:0; }
+  details .body { display:block !important; }
+  details:not([open]) .body { display:block !important; }
+  .finding summary::after { content:""; }
+}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <h1>{{ title }}</h1>
+  <p class="sub">
+    {{ mode_label }} &middot; {{ repo.root }}
+    {% if repo.base %}&middot; <code>{{ repo.base }}</code> &rarr; <code>{{ repo.head }}</code>{% endif %}
+    {% if repo.pr_number %}&middot; PR #{{ repo.pr_number }}{% endif %}
+    &middot; {{ duration }}s &middot; {{ generated_at }}
+  </p>
+
+  <div class="verdict {{ verdict }}" role="status"><strong>{{ verdict_label }}</strong> &middot; threshold: {{ fail_on }}</div>
+
+  <section aria-labelledby="summary-heading">
+    <h2 id="summary-heading">Review summary</h2>
+    <div class="stats">
+      {% for key in ["blocker", "major", "minor", "info"] %}
+      <div class="stat {{ key }}"><span class="number">{{ stats.severity_counts[key] }}</span><span class="label">{{ key }}</span></div>
+      {% endfor %}
+      <div class="stat"><span class="number">{{ stats.files_reviewed }}</span><span class="label">files reviewed</span></div>
+      <div class="stat"><span class="number">{{ stats.dropped_unverified }}</span><span class="label">unverified dropped</span></div>
+    </div>
+    <p class="sub" style="margin-top:9px">{{ stats.deduped }} duplicate(s) merged; {{ stats.suppressed }} below the confidence floor.</p>
+  </section>
+
+  {% for warning in warnings %}<aside class="note"><strong>Review note:</strong> {{ warning }}</aside>{% endfor %}
+
+  {% if category_bars or file_bars %}
+  <section aria-labelledby="overview-heading">
+    <h2 id="overview-heading">Where to look first</h2>
+    <div class="charts">
+      <div class="panel">
+        <h3>Findings by category</h3>
+        {% for bar in category_bars %}
+        <div class="chart-row"><span class="chart-label" title="{{ bar.label }}">{{ bar.label }}</span><span class="track"><span class="bar" style="width:{{ bar.width }}%"></span></span><span class="chart-count">{{ bar.count }}</span></div>
+        {% else %}<p class="sub">No findings.</p>{% endfor %}
+      </div>
+      <div class="panel">
+        <h3>Most affected files</h3>
+        {% for bar in file_bars %}
+        <div class="chart-row"><span class="chart-label" title="{{ bar.label }}">{{ bar.label }}</span><span class="track"><span class="bar" style="width:{{ bar.width }}%"></span></span><span class="chart-count">{{ bar.count }}</span></div>
+        {% else %}<p class="sub">No findings.</p>{% endfor %}
+      </div>
+    </div>
+  </section>
+  {% endif %}
+
+  <section aria-labelledby="findings-heading">
+    <h2 id="findings-heading">Findings</h2>
+    {% if findings_by_file %}
+      {% for path, items in findings_by_file %}
+      <div class="file-group">
+        <div class="file-name">{{ path }}</div>
+        {% for finding in items %}
+        <details class="finding {{ finding.severity }}" {% if finding.severity in ("blocker", "major") %}open{% endif %}>
+          <summary>
+            <span class="badge {{ finding.severity }}">{{ finding.severity }}</span>
+            <span class="title">{{ finding.title }}</span>
+            {% if finding.line %}<span class="location">:{{ finding.line }}</span>{% endif %}
+          </summary>
+          <div class="body">
+            <p>{{ finding.body }}</p>
+            {% if finding.evidence %}<pre class="evidence">{{ finding.evidence }}</pre>{% endif %}
+            {% if finding.suggestion %}<div class="fix"><strong>Suggested fix</strong><p>{{ finding.suggestion }}</p></div>{% endif %}
+            <div class="meta">
+              <span>{{ finding.category }}</span><span>via {{ finding.agent }}</span><span>confidence {{ "%.2f"|format(finding.confidence) }}</span>
+              {% if finding.rule_id %}<code>{{ finding.rule_id }}</code>{% endif %}
+              {% if finding.corroborated_by %}<span>corroborated by {{ finding.corroborated_by|join(", ") }}</span>{% endif %}
+            </div>
+          </div>
+        </details>
+        {% endfor %}
+      </div>
+      {% endfor %}
+    {% else %}
+      <div class="clean"><strong>No findings</strong>Nothing was flagged in the reviewed scope. Confirm coverage below before merging.</div>
+    {% endif %}
+  </section>
+
+  <section aria-labelledby="coverage-heading">
+    <h2 id="coverage-heading">Coverage</h2>
+    <table>
+      <caption>Model agent execution. Finding counts are raw, before aggregation.</caption>
+      <thead><tr><th scope="col">Agent</th><th scope="col">Status</th><th scope="col">Raw findings</th><th scope="col">Time</th><th scope="col">Detail</th></tr></thead>
+      <tbody>
+      {% for agent in agents %}
+        <tr><th scope="row">{{ agent.name }}</th>
+          {% if agent.error %}<td class="bad">failed</td>{% elif agent.skipped_reason %}<td class="skip">skipped</td>{% else %}<td class="ok">ok</td>{% endif %}
+          <td>{{ agent.finding_count }}</td><td>{{ agent.duration_s }}s</td><td>{{ agent.error or agent.skipped_reason or agent.summary }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+
+    <table style="margin-top:24px">
+      <caption>Deterministic analyzer execution.</caption>
+      <thead><tr><th scope="col">Analyzer</th><th scope="col">Status</th><th scope="col">Findings</th><th scope="col">Detail</th></tr></thead>
+      <tbody>
+      {% for analyzer in analyzers %}
+        <tr><th scope="row">{{ analyzer.name }}</th>
+          {% if analyzer.error %}<td class="bad">failed</td>{% elif analyzer.skipped_reason %}<td class="skip">skipped</td>{% else %}<td class="ok">ok</td>{% endif %}
+          <td>{{ analyzer.finding_count }}</td><td>{{ analyzer.error or analyzer.skipped_reason or "Completed" }}</td></tr>
+      {% else %}<tr><td colspan="4">No external analyzers configured; built-in heuristics may still have run.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section aria-labelledby="method-heading">
+    <h2 id="method-heading">How this review ran</h2>
+    <table><tbody>
+      <tr><th scope="row">Mode</th><td>{{ mode_label }}</td></tr>
+      <tr><th scope="row">Public egress</th><td>{{ "blocked; loopback only" if airgapped else "limited to configured hosts" }}</td></tr>
+      <tr><th scope="row">Socket allowlist</th><td>{{ "enabled" if guard_enabled else "disabled" }}</td></tr>
+      <tr><th scope="row">Model</th><td>{{ model }}</td></tr>
+      <tr><th scope="row">Analyzers used</th><td>{{ tools_used|join(", ") if tools_used else "none" }}</td></tr>
+      <tr><th scope="row">Evidence required</th><td>{{ "yes" if require_evidence else "no" }}</td></tr>
+    </tbody></table>
+  </section>
+
+  <footer>Generated by <strong>💀 vibekill {{ version }}</strong> &mdash; kills the vibe before your diff kills production. Advisory only: inspect every finding in context.</footer>
+</main>
+</body>
+</html>

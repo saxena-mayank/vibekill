@@ -1,0 +1,123 @@
+# vibekill configuration. Copy to `vibekill.toml` in your repository root.
+#
+# Every value here is the default, so an empty file behaves identically.
+# Environment variables override the file: VIBEKILL_MODE, VIBEKILL_LLM__MODEL, etc.
+# Nesting uses a double underscore.
+
+# "airgapped" blocks public egress. "github" additionally allowlists the
+# GitHub API and the configured model endpoint.
+mode = "airgapped"
+
+# Keep this enabled in both modes. GitHub mode extends the allowlist rather than
+# disabling the guard.
+enforce_airgap = true
+allow_hosts = ["127.0.0.1", "localhost", "::1"]
+
+# Diff scope. The caps stop one huge generated file from consuming the whole
+# review; skipped files are named in the report rather than dropped silently.
+diff_context_lines = 5
+max_files = 40
+max_diff_chars = 300_000
+
+# Severity that flips the verdict to "changes requested" and exits non-zero.
+fail_on = "blocker"
+
+# Confidence floor for model findings, applied after the evidence check.
+min_confidence = 0.35
+
+# Require model findings to quote the line they cite, verified against the file.
+# Turning this off roughly doubles the finding count and markedly reduces
+# reliability. Not recommended.
+require_evidence = true
+
+output_dir = ".vibekill"
+
+exclude = [
+    "**/node_modules/**",
+    "**/.venv/**",
+    "**/dist/**",
+    "**/build/**",
+    "**/vendor/**",
+    "**/__pycache__/**",
+    "**/*.min.js",
+    "**/*.lock",
+    "**/package-lock.json",
+    "**/poetry.lock",
+    "**/uv.lock",
+    "**/go.sum",
+    "**/*_pb2.py",
+    "**/*.snap",
+    "**/migrations/**",
+]
+
+[llm]
+# auto   : probe Ollama, then an OpenAI-compatible endpoint, else none
+# ollama : native /api/chat
+# openai : any /v1/chat/completions (llama.cpp, vLLM, LM Studio, TGI)
+# none   : no model; deterministic analysis only, and still useful
+provider = "auto"
+
+base_url = "http://127.0.0.1:11434"
+model = "qwen2.5-coder:7b"
+
+# Low temperature and a fixed seed so two CI runs on one diff agree.
+temperature = 0.1
+seed = 7
+max_output_tokens = 2048
+
+# Prompt budget in characters, roughly 4 per token. Characters rather than tokens
+# so no tokenizer has to ship into an offline install.
+context_chars = 32_000
+
+timeout_s = 180
+
+# One local runtime serves all four agents. Past ~2 concurrent requests it
+# thrashes its memory bus and total wall-clock gets worse, not better.
+max_concurrency = 2
+
+[tools]
+enabled = true
+ruff = true
+bandit = true
+semgrep = true
+heuristics = true      # built-in, no external binary, always available
+
+# Local Semgrep rule directories. Required for semgrep to run offline:
+# `--config auto` contacts the Semgrep registry with your languages, frameworks
+# and project URL, so air-gapped mode refuses it.
+semgrep_configs = []
+
+timeout_s = 120
+
+# Only report on lines this change touched. Turning this off surfaces every
+# pre-existing issue in every file you touched, which trains people to ignore
+# the reviewer.
+changed_lines_only = true
+
+# Per-agent controls. `extra_instructions` is appended to the system prompt and is
+# the cheapest way to adapt vibekill to a team's conventions.
+[agents.security]
+enabled = true
+max_findings = 20
+
+[agents.quality]
+enabled = true
+max_findings = 20
+
+[agents.testing]
+enabled = true
+max_findings = 20
+
+[agents.complexity]
+enabled = true
+max_findings = 20
+# extra_instructions = """
+# This codebase prefers explicit code over clever code. Do not suggest
+# comprehensions in place of readable loops.
+# """
+
+[github]
+api_url = "https://api.github.com"
+repo = ""           # owner/name
+# Use GITHUB_TOKEN or VIBEKILL_GITHUB__TOKEN. Required for private repositories;
+# fine-grained read-only Contents + Pull requests permissions are enough.
