@@ -57,7 +57,7 @@ Reply with JSON only, in exactly this shape:
       "evidence": "the single line of code you are referring to, copied verbatim",
       "suggestion": "concrete fix, or \\"\\" if none",
       "severity": "blocker|major|minor|info",
-      "category": "{categories}",
+      "category": "%(categories)s",
       "confidence": 0.0
     }
   ]
@@ -182,7 +182,7 @@ class Agent(ABC):
         categories = "|".join(c.value for c in self.allowed_categories())
         parts = [
             self.system_prompt().strip(),
-            RESPONSE_CONTRACT.format(categories=categories),
+            RESPONSE_CONTRACT % {"categories": categories},
         ]
         if self.config.extra_instructions.strip():
             parts.append(
