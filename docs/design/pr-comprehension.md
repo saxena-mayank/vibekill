@@ -1,198 +1,125 @@
 # Design: PR comprehension and scope checking
 
-Status: proposed, awaiting approval. Branch: `feature/pr-comprehension`.
+Status: approved. Branch: `feature/pr-comprehension`.
 
 ## Goal
 
-Compare the DECLARED INTENT of a PR with the ACTUAL CHANGE, and show an approver
-(who may not read the language) what changed, why it might be there, and which
-changes have no visible link to the intent. Output is questions for the author,
-not verdicts. Everything works with `--provider none`.
+Compare the DECLARED INTENT of a PR with the ACTUAL CHANGE, and show an approver (who
+may not read the language) what changed, why it might be there, and which changes have
+no visible link to the intent. Output is questions for the author, not verdicts.
+Everything works with `--provider none`. Air-gapped local mode stays the default.
 
-## Pipeline placement
+## Pipeline
 
 ```
-source -> ReviewContext -> [scope analyser] -> evidence pack -> agents
-       -> evidence gate -> ReviewResult.comprehension -> renderers
+source -> ReviewContext(+intent) -> scope analyser -> ReviewResult.comprehension -> renderers
 ```
 
-New package `src/vibekill/scope/`: `intent.py`, `grouping.py`, `signals.py`,
-`explain.py` (templates), `questions.py`, `external.py` (trusted policy).
-It is a pure function of `ReviewContext` plus intent text, so it is testable
-without git or a model. The optional model step runs after it and can only reword.
+A new package `src/vibekill/scope/` (`intent`, `grouping`, `signals`, `explain`,
+`questions`). It is a pure function of `ReviewContext`, so it needs no git and no model.
+An optional model step runs afterwards and can only reword; its text must quote a diff
+line that the existing evidence gate verifies. The typed `Comprehension` object is
+the single source for JSON, HTML and the PR comment, so they cannot disagree.
 
-## Intent sources and precedence
+## Intent
 
-All sources are collected, and each term keeps a tag saying where it came from.
-Strength of a link to a file, strongest first:
+Sources, all optional: PR title and body (`--pr-title`, `--pr-body-file`, or
+`VIBEKILL_PR_TITLE` / `VIBEKILL_PR_BODY`; GitHub mode reads them from the API), any
+number of plain-markdown files (`--intent-file`, for a ticket or a spec such as
+`.kiro/specs/**/tasks.md`), and commit subjects (weak).
 
-1. A file path or symbol named in the spec/task file (`--spec-file`, plain markdown;
-   checkbox items and backticked paths are read, nothing Kiro-specific).
-2. A path or symbol named in the PR title/description or ticket text.
-3. Shared rare words between intent and a file's path or its added identifiers.
-4. Commit subjects (weak; labelled as such).
+Every term remembers its source. Link strength, strongest first: path or symbol named
+in an intent file; path or symbol named in the title/body; shared rare words; commit
+subjects. Status is `found`, `weak` (only commit subjects, or only generic words such as
+"fix" or "update"), or `none`. With `none`, the report shows INCIDENTAL and type-based
+SUPPORTING groups but never CORE or UNTRACED: a file cannot be untraced from nothing.
 
-If no intent text exists, state is `no_intent`. In that state the report still
-shows INCIDENTAL and type-based SUPPORTING groups, but never assigns CORE or
-UNTRACED. A file cannot be "untraced" with nothing to trace to.
+The PR body is untrusted text. It is only tokenised. HTML comments (PR template
+placeholders) and fenced code are dropped before extraction.
 
-Local mode has no PR body, so it is passed in (new flags below). GitHub mode reads it
-from the API.
+## Grouping (first match wins)
 
-## Grouping rules (first match wins, in this order)
+1. INCIDENTAL: lock or generated path, formatting-only, pure rename, verbatim move.
+2. CORE: non-test file with a strong link or a score above `core_min_score`.
+3. SUPPORTING: tests that point at a CORE file; config, packaging, CI, docs,
+   `__init__.py`; files importing or imported by a CORE file.
+4. UNTRACED: intent exists and nothing above matched.
 
-1. INCIDENTAL: lockfile or generated path (reuses `DEFAULT_EXCLUDES`), formatting-only
-   edit, pure rename, or code moved verbatim between files.
-2. CORE: non-test file with a strong link (levels 1-2) or a score above
-   `core_min_score`.
-3. SUPPORTING: test file whose name or imports point to a CORE file; config, packaging,
-   CI, docs, `__init__.py` re-exports; a file that imports or is imported by a CORE file.
-4. UNTRACED: intent exists, none of the above matched.
+Each file stores its rule as a reason code. Non-Python files get path/extension rules
+only and the report says so.
 
-Each file records the rule that placed it ("reason code"), so the report can say why.
-Non-Python files get path/extension rules only (1, 2 by path, 3 by type, 4), and the
-report says so.
-
-## Deterministic signals
+## Deterministic signals (all INFO, never affect verdict or exit code)
 
 | Signal | Computation |
 |---|---|
-| formatting_only | Per file, deleted vs added lines are equal after stripping whitespace, quote style and trailing commas (multiset compare). For Python, also `ast.dump` equality when old and new text are both available. |
-| pure_rename | `change_type == renamed` and no hunks, or similarity is 100%. |
-| moved_code | A run of 4 or more normalised lines deleted in one file and added verbatim in another. |
-| isolated_file (Python) | A changed non-test file with no import edge or shared changed-symbol reference to any other changed file. Named "no visible link to other changed files". It does not claim to prove the call path; dynamic dispatch is invisible and the report says so. |
-| single_impl_abstraction | Added class that is ABC/Protocol/has abstract methods, or named `*Factory`/`*Builder`/`*Registry`, with at most one subclass or product among the changed files. Wording says "among changed files" because the full repo is not parsed. |
-| duplicate_helper | Reuses `_cross_file_duplicates`, plus a new top-level function whose normalised body matches an existing one, or whose name collides with a basename in `repo_file_index`. |
-| size_vs_intent | Files changed, lines changed, and share of files in UNTRACED, compared to `max_files_advisory` / `max_lines_advisory`. Stated as numbers, not as "too big". |
+| formatting_only | Deleted and added lines equal after stripping whitespace, quotes, trailing commas. |
+| pure_rename | Renamed, no hunks or 100% similarity. |
+| moved_code | 4 or more normalised lines deleted in one file and added verbatim in another. |
+| isolated_file (Python) | Changed non-test file with no import or changed-symbol link to another changed file. Worded "no visible link", not "off the call path". |
+| single_impl_abstraction | Added ABC/Protocol or `*Factory`/`*Builder`/`*Registry` with at most one subclass or product among changed files. |
+| duplicate_helper | Existing `_cross_file_duplicates`, plus a new function whose normalised body matches an existing one or whose name matches a path in `repo_file_index`. |
+| size_vs_intent | Files and lines against `max_files_advisory` / `max_lines_advisory`, reported as numbers. |
 
-Every signal is INFO severity and never affects the verdict or exit code. The
-"could be one function" style claim is never emitted.
+## Explanations and the click-to-explain view
 
-## Plain-language explanations and the click-to-explain view
+Templates keyed on reason code and change shape, for example "Adds a new function
+`create_user` (12 lines). It is named in the PR description." Three levels: file; block
+(one AST unit for Python, one hunk otherwise); line, only where a deterministic fact
+exists (whitespace-only, import added, comment-only, moved).
 
-Explanations come from templates keyed on reason code and change shape, for
-example: "Adds a new function `create_user` (12 lines). It is named in the PR
-description." or "Only whitespace changed. Behaviour is identical."
+The info button on a block opens a panel: what changed; why it may be here (the link
+found, or "no visible link"); the question for the author; an optional model note
+labelled as such. A "Technical detail" toggle shows reason codes. In GitHub fetch-only
+mode there is no file content, so blocks fall back to hunks.
 
-Three levels, each labelled by provenance:
+HTML is self-contained with `<details>`, works with JavaScript off, and an inline script
+only drives the side panel. No CDN. The PR comment (`review.comment.md`) is one Markdown
+file starting with the model disclosure line ("Model: local (...), no data left this
+machine" or "Model: external (host), diff sent"), a group table and the questions. It
+ends with a marker `<!-- vibekill:comprehension -->`.
 
-- File: group, one-line what, one-line why-here, any signals, any question.
-- Block: for Python, one AST unit (function, class, import group, statement run); for
-  other languages, one hunk. This is the unit the info button attaches to.
-- Line: only lines with their own deterministic fact get a marker (whitespace-only,
-  import added, comment-only, moved). No button on every line, which would be noise.
-
-Info button on a block opens a panel with four fixed parts:
-1. What changed (template).
-2. Why it may be here (the link that was found, or "no visible link found").
-3. Question for the author, if any.
-4. Model note (optional, labelled "model suggestion", must quote a diff line that the
-   existing evidence gate has verified; dropped otherwise).
-
-A "Technical detail" toggle shows the raw reason code and rule for developers.
-
-## Report layout
-
-HTML ("What changed and why", placed above findings; self-contained, no CDN):
-
-```
-What changed and why                      Intent: PR title + description
-Model: local (qwen2.5-coder:7b), no data left this machine
-15 files, +412/-37   CORE 3 | SUPPORTING 4 | INCIDENTAL 5 | UNTRACED 3
-[v] CORE - needed for the stated change (3)
-    app/api/users.py   Adds the new endpoint named in the description.   [i]
-      block: def create_user  (+12)        [i]  -> panel opens beside the diff
-[>] SUPPORTING (4)   [>] INCIDENTAL (5)   [v] UNTRACED (3)
-    utils/date.py   No visible link to the intent.
-    Question: Why does this PR touch utils/date.py?
-Missing rationale: the description has no per-file-group explanation (advisory).
-```
-
-Built with `<details>`/`<summary>` so it works with JavaScript off. A small inline
-script (no network) only drives the side panel and expand-all. Diff data is embedded
-and capped by `max_diff_chars`; over the cap, files fall back to file-level view and
-the report says so.
-
-PR comment (`review.comment.md`, one file, one comment):
-
-```
-### vibekill: what changed and why
-Model: local (qwen2.5-coder:7b), no data left this machine
-15 files, +412/-37. Grouped by stated intent ("Add GET /users endpoint").
-| Group | Files |
-| CORE | app/api/users.py |
-| UNTRACED | utils/date.py, config/legacy.py |
-Questions for the author
-- Why does this PR touch `utils/date.py`? No visible link to the intent.
-Note: advisory only. Grouping is path-level for non-Python files.
-<!-- vibekill:comprehension -->
-```
-
-The marker comment is there so a later, opt-in step can update one comment. Posting to
-GitHub is NOT in this design; see "Not building".
-
-## Config (all additive, defaults shown)
+## Config (additive, defaults)
 
 ```toml
 [scope]
 enabled = true
-intent_file = ""            # also --spec-file
-ticket_file = ""
 core_min_score = 0.5
 max_files_advisory = 10
 max_lines_advisory = 400
-require_rationale = false   # missing-rationale check is reported, never blocks
-[external_model]            # read ONLY from trusted sources, see below
+require_rationale = false   # reports missing per-group rationale; never blocks
+[external_model]            # trusted sources only
 enabled = false
-host = ""
 allowed_hosts = []
 ```
 
-Proposed new CLI flags (additive, none renamed): `--intent-title`, `--intent-body`,
-`--intent-file`, `--spec-file`, `--ticket-file`, `--scope/--no-scope`, and a new
-`pr-comment` value for `--format`. JSON gains an optional `comprehension` key under
-the existing `vibekill/review/v1` schema; no existing key changes.
+CLI additions (approved): `--pr-title`, `--pr-body-file` (`-` is stdin), repeatable
+`--intent-file`, `--scope/--no-scope`, and `pr-comment` as a `--format` value. JSON gains
+an optional `comprehension` key under `vibekill/review/v1`.
 
-## External model trust model
+## External model trust (lands after the already-merged config-trust fix)
 
-- Default is off. Local mode is unchanged.
-- Policy is read from, in order: (1) env `VIBEKILL_ADMIN_POLICY` pointing to a file
-  outside the checkout, (2) the base-branch copy via `git show <base_sha>:vibekill.toml`.
-  The working-tree (PR head) copy is never consulted for `[external_model]`. In
-  GitHub mode the base copy is fetched from the API at `base.sha`.
-- Only hosts in the trusted `allowed_hosts` are added to the guard for that run. No
-  fallback: if the external model is unreachable, the run proceeds with no model and
-  says so. It never retries against a different host.
-- Every report states the mode and receiving host, e.g. "Model: external
-  (api.example.com), diff sent".
-- Test: a PR that edits `vibekill.toml` to enable external mode is ignored.
+Off by default. Policy comes only from the base ref or admin environment variables;
+the PR head copy is never read. Only allowlisted hosts are added to the guard for that
+run, with no fallback from local to external. Every report states mode and host. Test:
+a PR editing `vibekill.toml` to enable external mode is ignored.
 
 ## Not building
 
-- Hosted service, accounts, database, telemetry, dashboard.
-- GitHub comment posting (opt-in, one updated comment, is a possible follow-up).
-- Cross-language call graphs, semantic similarity, verdicts about design quality.
-- Any blocking result from these checks.
+Hosted service, accounts, database, telemetry; GitHub comment posting; cross-language
+call graphs; semantic similarity; any blocking result from these checks.
 
 ## Process
 
-Work happens on `feature/pr-comprehension`, one commit per step with passing tests,
-merged to `main` by pull request. I will not push or merge without your go-ahead.
-Dev environment: Python 3.14.4 in `.venv` (118 tests pass at baseline). The package
-floor stays 3.11. CI and classifiers do not mention 3.14 yet; adding it is a one-line
-follow-up if you want it.
+One commit per step on this branch, tests passing before the next step, merged by PR.
+The dev environment is Python 3.14.4. The package floor stays 3.11. CI gains a
+non-required 3.14 job; the classifier waits until the analysers and UI extras are
+verified on 3.14.
 
 ## Risks and open questions
 
-1. Existing weakness: local mode reads `vibekill.toml` from the PR head, so an author can
-   already change `llm.base_url` and `allow_hosts`. Fixing it touches the egress path.
-   Recommend a separate approved change; needs your decision.
-2. Intent matching by shared words will miss synonyms. That biases toward UNTRACED false
-   positives, which hurts precision. Mitigation: UNTRACED needs no link at all from
-   levels 1-3, and the report words it as a question. The eval harness measures this.
-3. isolated_file produces false positives for entry points and plugins loaded by
-   config. Mitigation: config and registry files are SUPPORTING by rule 3.
-4. Block-level view needs `new_content`, which exists in local mode but not in GitHub
-   fetch-only mode. There it degrades to hunk-level blocks.
-5. Open: should `--intent-body` accept `-` for stdin so CI can pass the PR body safely?
-6. Open: confirm the flag names above before I add them.
+1. Word matching misses synonyms, which pushes files into UNTRACED wrongly. UNTRACED is
+   worded as a question, and the eval harness measures it.
+2. isolated_file will flag entry points loaded by config. Config and registry files are
+   SUPPORTING by rule.
+3. The Streamlit UI still reads the repo config directly (follow-up from the config-trust PR).
+4. Python 3.14 behaviour of the `analysers` and `ui` extras is unverified.
