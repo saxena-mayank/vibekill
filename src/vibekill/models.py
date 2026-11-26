@@ -398,11 +398,36 @@ class FileGroup:
 
 
 @dataclass(slots=True)
+class Signal:
+    """A deterministic observation about the scope of a change.
+
+    Signals state facts ("no import link to the other changed files"), never
+    verdicts, and never affect the review verdict or exit code.
+    """
+
+    code: str
+    message: str
+    path: str | None = None
+    line: int | None = None
+    evidence: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "code": self.code,
+            "message": self.message,
+            "path": self.path,
+            "line": self.line,
+            "evidence": list(self.evidence),
+        }
+
+
+@dataclass(slots=True)
 class Comprehension:
     """Declared intent compared with the actual change. Advisory; never blocks."""
 
     intent: Intent = field(default_factory=Intent)
     files: list[FileGroup] = field(default_factory=list)
+    signals: list[Signal] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
     def counts(self) -> dict[str, int]:
@@ -413,6 +438,7 @@ class Comprehension:
             "intent": self.intent.to_dict(),
             "groups": self.counts(),
             "files": [f.to_dict() for f in self.files],
+            "signals": [x.to_dict() for x in self.signals],
             "notes": list(self.notes),
         }
 

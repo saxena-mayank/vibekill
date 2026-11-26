@@ -256,7 +256,7 @@ def _make(fact: _Facts, group: str, reason: str, evidence: list[str]) -> FileGro
 
 
 def _facts(f: FileDiff) -> _Facts:
-    kind = _kind(f)
+    kind = file_kind(f)
     stem = f.path.rsplit("/", 1)[-1].rsplit(".", 1)[0]
     fact = _Facts(
         file=f,
@@ -268,8 +268,8 @@ def _facts(f: FileDiff) -> _Facts:
     for name in _DEFINITION.findall(f.added_source()):
         fact.defined_tokens |= tokens(name)
     if f.language == "python":
-        fact.module = _module_name(f.path)
-        fact.imports = _python_imports(f.new_content)
+        fact.module = module_name(f.path)
+        fact.imports = python_imports(f.new_content)
     return fact
 
 
@@ -277,7 +277,7 @@ def _tokens_of(words: frozenset[str]) -> set[str]:
     return {t for w in words for t in tokens(w)} | set(words)
 
 
-def _kind(f: FileDiff) -> str:
+def file_kind(f: FileDiff) -> str:
     name = f.path.rsplit("/", 1)[-1].lower()
     low = f.path.lower()
     if f.is_test_file or name == "conftest.py":
@@ -296,7 +296,7 @@ def _kind(f: FileDiff) -> str:
     return "source"
 
 
-def _module_name(path: str) -> str | None:
+def module_name(path: str) -> str | None:
     if not path.endswith(".py"):
         return None
     parts = path[:-3].split("/")
@@ -307,7 +307,7 @@ def _module_name(path: str) -> str | None:
     return ".".join(parts) or None
 
 
-def _python_imports(source: str | None) -> set[str]:
+def python_imports(source: str | None) -> set[str]:
     if not source:
         return set()
     try:

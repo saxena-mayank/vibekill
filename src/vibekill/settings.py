@@ -121,6 +121,9 @@ class ScopeSettings(BaseModel):
     # shared with the file path, a term shared with a name defined in the change)
     # contributes 0.5, so the default needs one and 1.0 needs both.
     core_min_score: float = Field(default=0.5, ge=0.0, le=1.0)
+    # Above these, the report states the numbers. They are prompts to look, not limits.
+    max_files_advisory: int = Field(default=10, ge=1)
+    max_lines_advisory: int = Field(default=400, ge=1)
 
 
 class GitHubSettings(BaseModel):

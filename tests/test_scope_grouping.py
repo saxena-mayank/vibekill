@@ -9,8 +9,8 @@ import json
 import subprocess
 from pathlib import Path
 
-from vibekill.diffparse import parse_unified_diff
-from vibekill.models import RepoMeta, ReviewContext
+from diffs import ctx, d_add, d_delete, d_modify, d_rename
+from vibekill.models import ReviewContext
 from vibekill.pipeline import run_review
 from vibekill.scope.grouping import group_files
 from vibekill.scope.intent import build_intent
@@ -20,46 +20,6 @@ from vibekill.settings import Settings
 # --------------------------------------------------------------------------- #
 # Builders
 # --------------------------------------------------------------------------- #
-def d_add(path: str, lines: list[str]) -> str:
-    body = "\n".join(f"+{x}" for x in lines)
-    return (
-        f"diff --git a/{path} b/{path}\nnew file mode 100644\n--- /dev/null\n+++ b/{path}\n"
-        f"@@ -0,0 +1,{len(lines)} @@\n{body}\n"
-    )
-
-
-def d_modify(path: str, old: list[str], new: list[str]) -> str:
-    body = "\n".join([*(f"-{x}" for x in old), *(f"+{x}" for x in new)])
-    return (
-        f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n"
-        f"@@ -1,{len(old)} +1,{len(new)} @@\n{body}\n"
-    )
-
-
-def d_delete(path: str, lines: list[str]) -> str:
-    body = "\n".join(f"-{x}" for x in lines)
-    return (
-        f"diff --git a/{path} b/{path}\ndeleted file mode 100644\n--- a/{path}\n+++ /dev/null\n"
-        f"@@ -1,{len(lines)} +0,0 @@\n{body}\n"
-    )
-
-
-def d_rename(old: str, new: str) -> str:
-    return (
-        f"diff --git a/{old} b/{new}\nsimilarity index 100%\nrename from {old}\nrename to {new}\n"
-    )
-
-
-def ctx(*diffs: str, excluded=(), contents: dict[str, str] | None = None) -> ReviewContext:
-    files = parse_unified_diff("".join(diffs))
-    for f in files:
-        if contents and f.path in contents:
-            f.new_content = contents[f.path]
-    c = ReviewContext(meta=RepoMeta(root="/tmp/x"), files=files)
-    c.excluded_files = list(excluded)
-    return c
-
-
 def run(context: ReviewContext, **intent_kwargs):
     intent = build_intent(**intent_kwargs)
     files, notes = group_files(context, intent)

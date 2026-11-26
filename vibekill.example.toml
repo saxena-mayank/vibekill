@@ -136,3 +136,6 @@ enabled = true
 # and a term shared with a name defined in the change each add 0.5, so 0.5 needs one and
 # 1.0 needs both.
 core_min_score = 0.5
+# Past these, the report states the file and line counts. Prompts to look, not limits.
+max_files_advisory = 10
+max_lines_advisory = 400

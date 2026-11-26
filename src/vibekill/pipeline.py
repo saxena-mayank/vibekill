@@ -23,6 +23,7 @@ from .models import Comprehension, ReviewResult
 from .report import write_reports
 from .scope.grouping import group_files
 from .scope.intent import build_intent, read_intent_files
+from .scope.signals import compute_signals
 from .settings import Settings
 from .sources import SourceError, build_source
 
@@ -182,7 +183,13 @@ def _attach_scope(
     )
     intent.notes.extend(read_notes)
     files, notes = group_files(context, intent, settings.scope.core_min_score)
-    context.comprehension = Comprehension(intent=intent, files=files, notes=notes)
+    signals = compute_signals(
+        context,
+        files,
+        max_files=settings.scope.max_files_advisory,
+        max_lines=settings.scope.max_lines_advisory,
+    )
+    context.comprehension = Comprehension(intent=intent, files=files, signals=signals, notes=notes)
     return list(read_notes)
 
 
