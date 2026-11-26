@@ -3,6 +3,11 @@
 # Every value here is the default, so an empty file behaves identically.
 # Environment variables override the file: VIBEKILL_MODE, VIBEKILL_LLM__MODEL, etc.
 # Nesting uses a double underscore.
+#
+# Network policy keys are read from the BASE branch's copy of this file, not from
+# the PR being reviewed: mode, enforce_airgap, allow_hosts, llm.base_url,
+# llm.api_key, github.api_url, github.token. Set them on your main branch or through
+# VIBEKILL_* variables in CI. Edits to them inside a PR are ignored and reported.
 
 # "airgapped" blocks public egress. "github" additionally allowlists the
 # GitHub API and the configured model endpoint.

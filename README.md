@@ -335,6 +335,21 @@ model = "qwen2.5-coder:7b"
 extra_instructions = "This codebase prefers explicit code over clever code."
 ```
 
+### Who can change network policy
+
+In CI the checked-out `vibekill.toml` belongs to the PR author, so it cannot widen
+what vibekill may reach. For a commit-range review (`--base`), these keys are read
+from the **base ref** only: `mode`, `enforce_airgap`, `allow_hosts`, `llm.base_url`,
+`llm.api_key`, `github.api_url`, `github.token`. A PR that edits them is ignored and
+the report says so. Everything else in the file (`fail_on`, agent settings, ...) still
+comes from the PR.
+
+To allow a host (for example a model your organisation has approved), set it on the
+base branch or in the CI job's environment, e.g. `VIBEKILL_ALLOW_HOSTS`. Environment
+variables and CLI flags are set by whoever runs the job, so they always apply.
+`--uncommitted` reviews use your working-tree file. `--trust-head-config` does the
+same for a commit range, for your own machine only.
+
 ## What it won't do
 
 Stated plainly, because a tool that oversells itself gets uninstalled:

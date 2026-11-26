@@ -64,6 +64,14 @@ def review(
     output: Path | None = typer.Option(None, "--output", "-o", help="Report output directory."),
     fail_on: str | None = typer.Option(None, "--fail-on", help="blocker|major|minor|info."),
     config: Path | None = typer.Option(None, "--config", "-c", help="Path to vibekill.toml."),
+    trust_head_config: bool = typer.Option(
+        False,
+        "--trust-head-config",
+        help=(
+            "Read policy keys (allow_hosts, llm.base_url, ...) from the checked-out "
+            "vibekill.toml instead of the base ref. Only for your own local work, never for CI."
+        ),
+    ),
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Only write reports, no stdout summary."),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Debug logging."),
 ) -> None:
@@ -93,7 +101,10 @@ def review(
         overrides["github"] = github
 
     try:
-        settings = Settings.load(config, search_from=repo, **overrides)
+        # In CI the checkout is the PR head, which its author controls, so policy keys
+        # come from the base ref. Working-tree reviews are the user's own files.
+        trusted_ref = None if (uncommitted or trust_head_config or overrides.get("mode") == "github") else base
+        settings = Settings.load(config, search_from=repo, trusted_ref=trusted_ref, **overrides)
     except Exception as exc:
         typer.secho(f"configuration error: {exc}", fg=typer.colors.RED, err=True)
         raise typer.Exit(2) from exc
