@@ -21,8 +21,10 @@ jobs:
       matrix:
         # Oldest and newest supported. The middle version rarely breaks alone,
         # and keeping the matrix small keeps PR feedback fast.
-        python: ["3.11", "3.13"]
-
+        python: ["3.11", "3.13", "3.14"]
+    # 3.14 is not a supported version yet (no classifier). It runs so we learn about
+    # breakage early, and its failure does not fail the workflow.
+    continue-on-error: ${{ matrix.python == '3.14' }}
     steps:
       - uses: actions/checkout@v4
         with:
