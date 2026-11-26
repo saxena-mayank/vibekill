@@ -74,7 +74,8 @@ class ReviewRequest(BaseModel):
             }
 
         search_from = Path(self.repo_path) if self.mode == "airgapped" else None
-        return Settings.load(search_from=search_from, **overrides)
+        trusted_ref = self.base if self.mode == "airgapped" and not self.include_uncommitted else None
+        return Settings.load(search_from=search_from, trusted_ref=trusted_ref, **overrides)
 
 
 def _review(request: ReviewRequest):

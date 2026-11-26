@@ -115,6 +115,7 @@ def _run_review_locked(
         client = build_client(settings.llm)
         result = run_graph(context, settings, client=client)
 
+        result.warnings.extend(settings.config_warnings)
         run = ReviewRun(result=result)
         if guard and guard.violations:
             # Something tried to reach the network during an air-gapped review.

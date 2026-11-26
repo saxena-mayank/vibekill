@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import tomllib
 from pathlib import Path
 from typing import Any, Literal
@@ -151,6 +152,9 @@ class Settings(BaseSettings):
     tools: ToolSettings = ToolSettings()
     agents: AgentsSettings = AgentsSettings()
     github: GitHubSettings = GitHubSettings()
+    # Notes produced while loading config, such as policy keys ignored because they
+    # came from the PR head. Surfaced in the review's warnings.
+    config_warnings: list[str] = Field(default_factory=list)
 
     @field_validator("fail_on", mode="before")
     @classmethod
@@ -211,17 +215,139 @@ class Settings(BaseSettings):
         config_file: Path | None = None,
         *,
         search_from: Path | None = None,
+        trusted_ref: str | None = None,
         **overrides: Any,
     ) -> Settings:
-        """Load TOML, then environment variables, then explicit overrides."""
+        """Load TOML, then environment variables, then explicit overrides.
+
+        `trusted_ref` is a git ref (normally the PR's base branch). When given, the
+        policy keys in `POLICY_KEYS` are taken from that ref's copy of the config file
+        and the checked-out copy cannot change them, because in CI the checkout is
+        the PR head and its author controls it. Environment variables and explicit
+        overrides are set by whoever runs the tool, so they still win.
+        """
         data: dict[str, Any] = {}
+        warnings: list[str] = []
         path = config_file or find_config_file(search_from or Path.cwd())
         if path and path.is_file():
-            raw = tomllib.loads(path.read_text("utf-8"))
-            data = raw.get("tool", {}).get("vibekill", {}) if path.name == "pyproject.toml" else raw
+            data = _read_config(path)
+            if trusted_ref:
+                data, warnings = _apply_trusted_policy(data, path, trusted_ref)
         merged = _deep_merge(data, _environment_overrides())
         merged = _deep_merge(merged, _prune_none(overrides))
-        return cls(**merged)
+        settings = cls(**merged)
+        settings.config_warnings = warnings
+        return settings
+
+
+# Keys that decide where data may go. A PR author must not be able to change them.
+# Each entry is a path of table names ending in the key.
+POLICY_KEYS: tuple[tuple[str, ...], ...] = (
+    ("mode",),
+    ("enforce_airgap",),
+    ("allow_hosts",),
+    ("llm", "base_url"),
+    ("llm", "api_key"),
+    ("github", "api_url"),
+    ("github", "token"),
+)
+
+
+def _read_config(path: Path) -> dict[str, Any]:
+    raw = tomllib.loads(path.read_text("utf-8"))
+    return _vibekill_table(raw, path.name)
+
+
+def _vibekill_table(raw: dict[str, Any], filename: str) -> dict[str, Any]:
+    return raw.get("tool", {}).get("vibekill", {}) if filename == "pyproject.toml" else raw
+
+
+def _git_show(path: Path, ref: str) -> str | None:
+    """Contents of `path` at `ref`, or None when the ref or file does not exist."""
+    cwd = path.resolve().parent
+    try:
+        prefix = subprocess.run(
+            ["git", "rev-parse", "--show-prefix"],
+            cwd=cwd, capture_output=True, text=True, timeout=30, check=False,
+        )
+        if prefix.returncode != 0:
+            return None
+        proc = subprocess.run(
+            ["git", "show", f"{ref}:{prefix.stdout.strip()}{path.name}"],
+            cwd=cwd, capture_output=True, text=True, timeout=30, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return proc.stdout if proc.returncode == 0 else None
+
+
+def _get_path(data: dict[str, Any], keys: tuple[str, ...]) -> Any:
+    for key in keys:
+        if not isinstance(data, dict) or key not in data:
+            return None
+        data = data[key]
+    return data
+
+
+def _set_path(data: dict[str, Any], keys: tuple[str, ...], value: Any) -> None:
+    for key in keys[:-1]:
+        data = data.setdefault(key, {})
+    if value is None:
+        data.pop(keys[-1], None)
+    else:
+        data[keys[-1]] = value
+
+
+def _apply_trusted_policy(
+    head: dict[str, Any], path: Path, ref: str
+) -> tuple[dict[str, Any], list[str]]:
+    """Overwrite policy keys in `head` with the values from `ref`.
+
+    Fails closed: if the ref or file cannot be read, the policy keys fall back to
+    defaults and a warning says so.
+    """
+    warnings: list[str] = []
+    text = _git_show(path, ref)
+    if text is None:
+        base: dict[str, Any] = {}
+        # A missing file at a valid ref is normal (config added by this PR). An
+        # unreadable ref is not, so say which.
+        if not _ref_exists(path, ref):
+            warnings.append(
+                f"could not read {path.name} at {ref!r}; policy keys use built-in defaults"
+            )
+    else:
+        try:
+            base = _vibekill_table(tomllib.loads(text), path.name)
+        except tomllib.TOMLDecodeError:
+            base = {}
+            warnings.append(
+                f"{path.name} at {ref!r} is not valid TOML; policy keys use built-in defaults"
+            )
+    merged = json.loads(json.dumps(head))  # deep copy; config values are plain TOML types
+    for keys in POLICY_KEYS:
+        head_value, base_value = _get_path(head, keys), _get_path(base, keys)
+        if head_value != base_value:
+            _set_path(merged, keys, base_value)
+            if head_value is not None:
+                name = ".".join(keys)
+                warnings.append(
+                    f"ignored {name} from {path.name} in the checked-out tree: policy keys are "
+                    f"read from {ref!r} only. Set it on {ref!r} or through VIBEKILL_* "
+                    "environment variables."
+                )
+    return merged, warnings
+
+
+def _ref_exists(path: Path, ref: str) -> bool:
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"],
+            cwd=path.resolve().parent, capture_output=True, text=True, timeout=30, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return proc.returncode == 0
 
 
 CONFIG_FILENAMES = ("vibekill.toml", ".vibekill.toml")
