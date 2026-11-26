@@ -281,6 +281,8 @@ class ReviewContext:
     # silently unreviewed file is worse than an obviously unreviewed one.
     skipped_files: list[str] = field(default_factory=list)
     excluded_files: list[str] = field(default_factory=list)
+    # Declared intent, when scope checking is enabled. None means it was not run.
+    intent: Intent | None = None
 
     @property
     def additions(self) -> int:
@@ -307,6 +309,52 @@ class ReviewContext:
         for f in self.files:
             counts[f.language] = counts.get(f.language, 0) + f.additions
         return dict(sorted(counts.items(), key=lambda kv: -kv[1]))
+
+
+# --------------------------------------------------------------------------- #
+# Declared intent
+# --------------------------------------------------------------------------- #
+# Where a piece of intent came from, strongest first. "file" is any markdown the user
+# pointed at (a ticket, a spec, a task list), treated as plain text.
+IntentKind = Literal["file", "title", "description", "commits"]
+IntentStatus = Literal["found", "weak", "none"]
+INTENT_KIND_RANK: dict[str, int] = {"file": 3, "title": 2, "description": 2, "commits": 1}
+
+
+@dataclass(slots=True)
+class IntentSource:
+    kind: IntentKind
+    label: str
+    chars: int = 0
+
+
+@dataclass(slots=True)
+class Intent:
+    """What the PR says it is for, reduced to terms that can be matched to files.
+
+    Each term remembers the strongest source that named it, so later steps can say
+    "named in the spec" instead of just "matched". `status` is `none` when there is
+    nothing to compare against, in which case nothing may be called untraced.
+    """
+
+    status: IntentStatus = "none"
+    sources: list[IntentSource] = field(default_factory=list)
+    terms: dict[str, IntentKind] = field(default_factory=dict)
+    paths: dict[str, IntentKind] = field(default_factory=dict)
+    symbols: dict[str, IntentKind] = field(default_factory=dict)
+    tasks: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status,
+            "sources": [{"kind": s.kind, "label": s.label, "chars": s.chars} for s in self.sources],
+            "terms": dict(self.terms),
+            "paths": dict(self.paths),
+            "symbols": dict(self.symbols),
+            "tasks": list(self.tasks),
+            "notes": list(self.notes),
+        }
 
 
 # --------------------------------------------------------------------------- #
@@ -503,7 +551,14 @@ class ReviewResult:
             "agents": [a.to_dict() for a in self.agent_results],
             "findings": [f.to_dict() for f in self.findings],
             "warnings": self.warnings,
+            **self._comprehension_dict(),
         }
+
+    def _comprehension_dict(self) -> dict[str, Any]:
+        """Optional section. Absent when scope checking did not run."""
+        if self.context.intent is None:
+            return {}
+        return {"comprehension": {"intent": self.context.intent.to_dict()}}
 
 
 def sort_findings(findings: Iterable[Finding]) -> list[Finding]:

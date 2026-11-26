@@ -110,6 +110,15 @@ class AgentsSettings(BaseModel):
         return getattr(self, name)
 
 
+class ScopeSettings(BaseModel):
+    """PR comprehension: compare declared intent with the actual change.
+
+    Advisory only. Nothing here changes the verdict or the exit code.
+    """
+
+    enabled: bool = True
+
+
 class GitHubSettings(BaseModel):
     """GitHub PR source configuration."""
 
@@ -152,6 +161,7 @@ class Settings(BaseSettings):
     tools: ToolSettings = ToolSettings()
     agents: AgentsSettings = AgentsSettings()
     github: GitHubSettings = GitHubSettings()
+    scope: ScopeSettings = ScopeSettings()
     # Notes produced while loading config, such as policy keys ignored because they
     # came from the PR head. Surfaced in the review's warnings.
     config_warnings: list[str] = Field(default_factory=list)

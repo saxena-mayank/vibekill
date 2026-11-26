@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -20,6 +21,7 @@ from .graph import review as run_graph
 from .llm import LLMClient, build_client
 from .models import ReviewResult
 from .report import write_reports
+from .scope.intent import build_intent, read_intent_files
 from .settings import Settings
 from .sources import SourceError, build_source
 
@@ -58,8 +60,14 @@ def run_review(
     write: bool = True,
     output_dir: Path | None = None,
     formats: list[str] | None = None,
+    pr_title: str | None = None,
+    pr_body: str | None = None,
+    intent_files: Sequence[Path | str] = (),
 ) -> ReviewRun:
     """Fetch, analyze, and render one review.
+
+    `pr_title`, `pr_body` and `intent_files` declare what the change is for. Local git
+    has no PR description, so the caller supplies it; GitHub mode reads it from the API.
 
     Reviews are serialized because the air-gap guard patches process-global
     sockets. Run multiple service processes for parallel repository reviews.
@@ -74,6 +82,9 @@ def run_review(
             write=write,
             output_dir=output_dir,
             formats=formats,
+            pr_title=pr_title,
+            pr_body=pr_body,
+            intent_files=intent_files,
         )
 
 
@@ -87,6 +98,9 @@ def _run_review_locked(
     write: bool,
     output_dir: Path | None,
     formats: list[str] | None,
+    pr_title: str | None,
+    pr_body: str | None,
+    intent_files: Sequence[Path | str],
 ) -> ReviewRun:
     guard: AirgapGuard | None = None
     if settings.enforce_airgap:
@@ -112,8 +126,12 @@ def _run_review_locked(
         if not context.reviewable_files():
             logger.warning("no reviewable files in this diff")
 
+        intent_notes: list[str] = []
+        if settings.scope.enabled:
+            intent_notes = _attach_intent(context, pr_title, pr_body, intent_files)
         client = build_client(settings.llm)
         result = run_graph(context, settings, client=client)
+        result.warnings.extend(intent_notes)
 
         result.warnings.extend(settings.config_warnings)
         run = ReviewRun(result=result)
@@ -139,6 +157,29 @@ def _run_review_locked(
     finally:
         if guard is not None:
             guard.release()
+
+
+def _attach_intent(
+    context,
+    pr_title: str | None,
+    pr_body: str | None,
+    intent_files: Sequence[Path | str],
+) -> list[str]:
+    """Build the declared intent and store it on the context. Returns warnings."""
+    meta = context.meta
+    # In local mode `meta.title` is only the latest commit subject, which is not a
+    # declared title. It is already in `commit_subjects`, so do not count it twice.
+    title = pr_title if pr_title is not None else (meta.title if context.mode == "github" else "")
+    body = pr_body if pr_body is not None else meta.description
+    texts, read_notes = read_intent_files(intent_files)
+    context.intent = build_intent(
+        title=title,
+        body=body,
+        intent_texts=texts,
+        commit_subjects=meta.commit_subjects,
+    )
+    context.intent.notes.extend(read_notes)
+    return list(read_notes)
 
 
 def probe_model(settings: Settings) -> LLMClient:

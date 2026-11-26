@@ -126,3 +126,9 @@ api_url = "https://api.github.com"
 repo = ""           # owner/name
 # Use GITHUB_TOKEN or VIBEKILL_GITHUB__TOKEN. Required for private repositories;
 # fine-grained read-only Contents + Pull requests permissions are enough.
+
+# PR comprehension: compare what the PR says it is for with what it changes.
+# Advisory only; it never changes the verdict or the exit code. Declare intent with
+# --pr-title, --pr-body-file and --intent-file (or VIBEKILL_PR_TITLE / VIBEKILL_PR_BODY).
+[scope]
+enabled = true

@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -44,6 +45,16 @@ def _configure_logging(verbose: bool) -> None:
         logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
+def _read_pr_body(path: Path) -> str:
+    """The PR body, from a file or stdin. Capped, because an author controls it."""
+    try:
+        text = sys.stdin.read() if str(path) == "-" else path.read_text("utf-8", errors="replace")
+    except OSError as exc:
+        typer.secho(f"could not read --pr-body-file: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(2) from exc
+    return text[:100_000]
+
+
 @app.command()
 def review(
     repo: Path = typer.Option(Path("."), "--repo", "-r", help="Path to the git repository."),
@@ -64,6 +75,22 @@ def review(
     output: Path | None = typer.Option(None, "--output", "-o", help="Report output directory."),
     fail_on: str | None = typer.Option(None, "--fail-on", help="blocker|major|minor|info."),
     config: Path | None = typer.Option(None, "--config", "-c", help="Path to vibekill.toml."),
+    pr_title: str | None = typer.Option(
+        None, "--pr-title", help="The PR title (declared intent). Also VIBEKILL_PR_TITLE."
+    ),
+    pr_body_file: Path | None = typer.Option(
+        None,
+        "--pr-body-file",
+        help="File holding the PR description, or '-' for stdin. Also VIBEKILL_PR_BODY.",
+    ),
+    intent_file: list[Path] = typer.Option(
+        [],
+        "--intent-file",
+        help="Markdown file describing the intent (ticket, spec, task list). Repeatable.",
+    ),
+    scope: bool | None = typer.Option(
+        None, "--scope/--no-scope", help="Compare declared intent with the change (default on)."
+    ),
     trust_head_config: bool = typer.Option(
         False,
         "--trust-head-config",
@@ -83,6 +110,8 @@ def review(
         overrides["mode"] = mode or "github"
     if fail_on:
         overrides["fail_on"] = fail_on
+    if scope is not None:
+        overrides["scope"] = {"enabled": scope}
     llm: dict = {}
     if model:
         llm["model"] = model
@@ -109,9 +138,17 @@ def review(
         typer.secho(f"configuration error: {exc}", fg=typer.colors.RED, err=True)
         raise typer.Exit(2) from exc
 
+    title = pr_title if pr_title is not None else os.environ.get("VIBEKILL_PR_TITLE")
+    if pr_body_file is not None:
+        body = _read_pr_body(pr_body_file)
+    else:
+        body = os.environ.get("VIBEKILL_PR_BODY")
     try:
         run = run_review(
             settings,
+            pr_title=title,
+            pr_body=body,
+            intent_files=intent_file,
             repo_path=repo,
             base=base,
             head=head,
