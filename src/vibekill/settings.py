@@ -117,6 +117,10 @@ class ScopeSettings(BaseModel):
     """
 
     enabled: bool = True
+    # A file is CORE when its link score reaches this. Each kind of evidence (a term
+    # shared with the file path, a term shared with a name defined in the change)
+    # contributes 0.5, so the default needs one and 1.0 needs both.
+    core_min_score: float = Field(default=0.5, ge=0.0, le=1.0)
 
 
 class GitHubSettings(BaseModel):

@@ -281,8 +281,9 @@ class ReviewContext:
     # silently unreviewed file is worse than an obviously unreviewed one.
     skipped_files: list[str] = field(default_factory=list)
     excluded_files: list[str] = field(default_factory=list)
-    # Declared intent, when scope checking is enabled. None means it was not run.
-    intent: Intent | None = None
+    # Declared intent and file grouping, when scope checking is enabled. None means it
+    # was not run.
+    comprehension: Comprehension | None = None
 
     @property
     def additions(self) -> int:
@@ -353,6 +354,65 @@ class Intent:
             "paths": dict(self.paths),
             "symbols": dict(self.symbols),
             "tasks": list(self.tasks),
+            "notes": list(self.notes),
+        }
+
+
+# --------------------------------------------------------------------------- #
+# Grouping the change by purpose
+# --------------------------------------------------------------------------- #
+# UNCLASSIFIED is used only when there is no usable declared intent: a file cannot be
+# called untraced when there is nothing to trace it to.
+GroupName = Literal["CORE", "SUPPORTING", "INCIDENTAL", "UNTRACED", "UNCLASSIFIED"]
+GROUP_ORDER: tuple[str, ...] = ("CORE", "SUPPORTING", "INCIDENTAL", "UNTRACED", "UNCLASSIFIED")
+
+
+@dataclass(slots=True)
+class FileGroup:
+    """Which purpose group one changed file belongs to, and the rule that decided it.
+
+    `reason` is a stable code (for example `core.path_named`) so reports and tests do
+    not depend on prose. `evidence` holds short facts a reader can check.
+    """
+
+    path: str
+    group: GroupName
+    reason: str
+    evidence: list[str] = field(default_factory=list)
+    old_path: str | None = None
+    language: str = "unknown"
+    additions: int = 0
+    deletions: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "path": self.path,
+            "old_path": self.old_path,
+            "group": self.group,
+            "reason": self.reason,
+            "evidence": list(self.evidence),
+            "language": self.language,
+            "additions": self.additions,
+            "deletions": self.deletions,
+        }
+
+
+@dataclass(slots=True)
+class Comprehension:
+    """Declared intent compared with the actual change. Advisory; never blocks."""
+
+    intent: Intent = field(default_factory=Intent)
+    files: list[FileGroup] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+
+    def counts(self) -> dict[str, int]:
+        return {g: sum(1 for f in self.files if f.group == g) for g in GROUP_ORDER}
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "intent": self.intent.to_dict(),
+            "groups": self.counts(),
+            "files": [f.to_dict() for f in self.files],
             "notes": list(self.notes),
         }
 
@@ -556,9 +616,9 @@ class ReviewResult:
 
     def _comprehension_dict(self) -> dict[str, Any]:
         """Optional section. Absent when scope checking did not run."""
-        if self.context.intent is None:
+        if self.context.comprehension is None:
             return {}
-        return {"comprehension": {"intent": self.context.intent.to_dict()}}
+        return {"comprehension": self.context.comprehension.to_dict()}
 
 
 def sort_findings(findings: Iterable[Finding]) -> list[Finding]:

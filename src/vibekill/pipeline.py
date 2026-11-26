@@ -19,8 +19,9 @@ from pathlib import Path
 from .airgap import AirgapGuard, EgressBlocked, engage
 from .graph import review as run_graph
 from .llm import LLMClient, build_client
-from .models import ReviewResult
+from .models import Comprehension, ReviewResult
 from .report import write_reports
+from .scope.grouping import group_files
 from .scope.intent import build_intent, read_intent_files
 from .settings import Settings
 from .sources import SourceError, build_source
@@ -128,7 +129,7 @@ def _run_review_locked(
 
         intent_notes: list[str] = []
         if settings.scope.enabled:
-            intent_notes = _attach_intent(context, pr_title, pr_body, intent_files)
+            intent_notes = _attach_scope(context, settings, pr_title, pr_body, intent_files)
         client = build_client(settings.llm)
         result = run_graph(context, settings, client=client)
         result.warnings.extend(intent_notes)
@@ -159,26 +160,29 @@ def _run_review_locked(
             guard.release()
 
 
-def _attach_intent(
+def _attach_scope(
     context,
+    settings: Settings,
     pr_title: str | None,
     pr_body: str | None,
     intent_files: Sequence[Path | str],
 ) -> list[str]:
-    """Build the declared intent and store it on the context. Returns warnings."""
+    """Build intent, group the changed files, store both on the context. Returns warnings."""
     meta = context.meta
     # In local mode `meta.title` is only the latest commit subject, which is not a
     # declared title. It is already in `commit_subjects`, so do not count it twice.
     title = pr_title if pr_title is not None else (meta.title if context.mode == "github" else "")
     body = pr_body if pr_body is not None else meta.description
     texts, read_notes = read_intent_files(intent_files)
-    context.intent = build_intent(
+    intent = build_intent(
         title=title,
         body=body,
         intent_texts=texts,
         commit_subjects=meta.commit_subjects,
     )
-    context.intent.notes.extend(read_notes)
+    intent.notes.extend(read_notes)
+    files, notes = group_files(context, intent, settings.scope.core_min_score)
+    context.comprehension = Comprehension(intent=intent, files=files, notes=notes)
     return list(read_notes)
 
 

@@ -184,6 +184,20 @@ def _normalise_word(word: str) -> str | None:
     return low
 
 
+def tokens(text: str) -> set[str]:
+    """Meaningful lower-case terms in an identifier, path or sentence.
+
+    Uses the same normalisation as intent terms so the two sides are comparable.
+    """
+    out: set[str] = set()
+    for raw in _WORD.findall(text):
+        for word in _split_identifier(raw):
+            term = _normalise_word(word)
+            if term:
+                out.add(term)
+    return out
+
+
 def _tasks(text: str) -> list[str]:
     cleaned = _FENCE.sub(" ", _HTML_COMMENT.sub(" ", text))
     return [m.group(1) for line in cleaned.splitlines() if (m := _CHECKBOX.match(line))]
